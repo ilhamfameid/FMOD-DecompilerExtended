@@ -353,7 +353,13 @@ public class Program
 		#endregion
 
 		// load all the banks in the specified folder
-		foreach (string bankFilePath in Directory.GetFiles(bankFolder, "*.bank"))
+		var bankFiles = Directory.GetFiles(bankFolder, "*.bank")
+    .OrderBy(p => Path.GetFileName(p) == "Master.bank" ? 0
+                : Path.GetFileName(p) == "Master.strings.bank" ? 1 : 2)
+    .ThenBy(p => p)
+    .ToArray();
+
+foreach (string bankFilePath in bankFiles)
 		{
 			studioSystem.loadBankFile(bankFilePath, LOAD_BANK_FLAGS.NORMAL, out Bank bank);
 
