@@ -2,7 +2,7 @@
 using System.Runtime.InteropServices;
 public class Program
 {
-    #region Compiler Warning bullshit
+	#region Compiler Warning bullshit
 
 	#pragma warning disable CS1998
 	#pragma warning disable CS4014
@@ -14,12 +14,12 @@ public class Program
 	#pragma warning disable CS8605
 	#pragma warning disable CS8625
 
-    #endregion
+	#endregion
 
-    #region Colored Text
-    // thank you https://stackoverflow.com/questions/2743260/is-it-possible-to-write-to-the-console-in-colour-in-net
-    public static string SPACE = "\r                                            "; // shortcut for when not verbose
-    public static string NORMAL = Console.IsOutputRedirected ? "" : "\x1b[39m";
+	#region Colored Text
+	// thank you https://stackoverflow.com/questions/2743260/is-it-possible-to-write-to-the-console-in-colour-in-net
+	public static string SPACE = "\r                                            "; // shortcut for when not verbose
+	public static string NORMAL = Console.IsOutputRedirected ? "" : "\x1b[39m";
 	public static string RED = Console.IsOutputRedirected ? "" : "\x1b[91m";
 	public static string GREEN = Console.IsOutputRedirected ? "" : "\x1b[92m";
 	public static string YELLOW = Console.IsOutputRedirected ? "" : "\x1b[93m";
@@ -119,7 +119,7 @@ public class Program
 		// If also saving to log
 		if (toLog)
 			File.AppendAllTextAsync(outputProjectPath + "/log.txt", "\n" + message);
- 
+
 	}
 	// get random GUIDs for some stuff
 	public static Guid GetRandomGUID()
@@ -172,6 +172,24 @@ public class Program
 		public double length;
 	}
 	#endregion
+
+	// Sets a parameter value. Global parameters live on the Studio System, not on the event instance.
+	// If setting by ID fails for a global parameter, retry by name. Failures are written to log.txt.
+	static void SetParam(FMOD.Studio.System sys, EventInstance inst, bool global, PARAMETER_ID id, string name, float value)
+	{
+		FMOD.RESULT r;
+		if (global)
+		{
+			r = sys.setParameterByID(id, value);
+			if (r != FMOD.RESULT.OK)
+				r = sys.setParameterByName(name, value);
+		}
+		else
+			r = inst.setParameterByID(id, value);
+
+		if (r != FMOD.RESULT.OK)
+			PushToConsoleLog($"ERROR! - set parameter '{name}' failed: {r}", RED, true);
+	}
 
 	public static async Task Main(string[] args)
 	{
@@ -353,13 +371,15 @@ public class Program
 		#endregion
 
 		// load all the banks in the specified folder
+		// Master.bank and Master.strings.bank are loaded first, so event paths (names) can be resolved
+		// for every other bank
 		var bankFiles = Directory.GetFiles(bankFolder, "*.bank")
-    .OrderBy(p => Path.GetFileName(p) == "Master.bank" ? 0
-                : Path.GetFileName(p) == "Master.strings.bank" ? 1 : 2)
-    .ThenBy(p => p)
-    .ToArray();
+			.OrderBy(p => Path.GetFileName(p) == "Master.bank" ? 0
+						: Path.GetFileName(p) == "Master.strings.bank" ? 1 : 2)
+			.ThenBy(p => p)
+			.ToArray();
 
-foreach (string bankFilePath in bankFiles)
+		foreach (string bankFilePath in bankFiles)
 		{
 			studioSystem.loadBankFile(bankFilePath, LOAD_BANK_FLAGS.NORMAL, out Bank bank);
 
@@ -442,7 +462,7 @@ foreach (string bankFilePath in bankFiles)
 					continue;
 
 				// get event GUID
-				if (eventDescription.getID(out FMOD.GUID eventID) != FMOD.RESULT.OK) 
+				if (eventDescription.getID(out FMOD.GUID eventID) != FMOD.RESULT.OK)
 					continue;
 
 				// make guid into a guid we can actually use, not fmod's bullshit
@@ -520,7 +540,8 @@ foreach (string bankFilePath in bankFiles)
 				int ParameterIndex = 0;
 				string ParameterName = string.Empty;
 				PARAMETER_ID ParameterID = new();
-
+				// Global parameters must be set on the Studio System, not on the event instance
+				bool ParameterIsGlobal = false;
 				// if int is higher than 0, it loops
 				Dictionary<string, int> SoundLoops = [];
 				#endregion
@@ -585,7 +606,7 @@ foreach (string bankFilePath in bankFiles)
 								PushToConsoleLog($"Sound Length: {truelength}", GREEN, true);
 								PushToConsoleLog($"Played at: {truestartpos}", GREEN, true);
 
-								if (IsParameter && ParameterValue > 0) 
+								if (IsParameter && ParameterValue > 0)
 								{
 									PushToConsoleLog($"Sound triggered on Parameter: {ParameterName}", GREEN, true);
 									PushToConsoleLog($"Parameter Value when triggered: {ParameterValue}", GREEN, true);
@@ -697,16 +718,19 @@ foreach (string bankFilePath in bankFiles)
 					MaxParameterValue = FindEventType.GetMaxParamValue(eventDescription, ParameterIndex);
 
 					if (eventDescription.getParameterDescriptionByIndex(ParameterIndex, out PARAMETER_DESCRIPTION parameter) == FMOD.RESULT.OK)
+					{
 						ParameterID = parameter.id;
+						ParameterIsGlobal = (parameter.flags & PARAMETER_FLAGS.GLOBAL) != 0;
+					}
 
 					// Apply the initial value as well (usually min) so value 0 isn't skipped.
-					eventInstance.setParameterByID(ParameterID, ParameterValue);
+					SetParam(studioSystem, eventInstance, ParameterIsGlobal, ParameterID, ParameterName, ParameterValue);
 
 					// Restart timeline for this parameter value.
 					eventInstance.setTimelinePosition(0);
 
-                    // so this won't run anymore
-                    InitParameter = true;
+					// so this won't run anymore
+					InitParameter = true;
 				}
 				#endregion
 
@@ -731,17 +755,21 @@ foreach (string bankFilePath in bankFiles)
 							PushToConsoleLog($"Checking Parameter: {ParameterName}", BROWN, true);
 							ParameterValue = FindEventType.GetMinParamValue(eventDescription, ParameterIndex);
 							MaxParameterValue = FindEventType.GetMaxParamValue(eventDescription, ParameterIndex);
+
 							if (eventDescription.getParameterDescriptionByIndex(ParameterIndex, out PARAMETER_DESCRIPTION parameter) == FMOD.RESULT.OK)
+							{
 								ParameterID = parameter.id;
+								ParameterIsGlobal = (parameter.flags & PARAMETER_FLAGS.GLOBAL) != 0;
+							}
 
 							// Apply the initial value as well (usually min) so value 0 isn't skipped.
-							eventInstance.setParameterByID(ParameterID, ParameterValue);
+							SetParam(studioSystem, eventInstance, ParameterIsGlobal, ParameterID, ParameterName, ParameterValue);
 
 							// Restart timeline for this parameter value.
 							eventInstance.setTimelinePosition(0);
 
-                            // so this won't run anymore
-                            InitParameter = true;
+							// so this won't run anymore
+							InitParameter = true;
 						}
 						#endregion
 
@@ -765,15 +793,15 @@ foreach (string bankFilePath in bankFiles)
 							ParameterValue++;
 							PushToConsoleLog($"Setting value for Parameter \"{ParameterName}\" to: {ParameterValue}", BROWN);
 
-                            // Go to next value
-                            eventInstance.setParameterByID(ParameterID, ParameterValue);
+							// Go to next value
+							SetParam(studioSystem, eventInstance, ParameterIsGlobal, ParameterID, ParameterName, ParameterValue);
 
 							// Restart timeline for each parameter step so sounds for that value are evaluated.
 							eventInstance.setTimelinePosition(0);
 
-                            // reset timer
-                            timeoutTimer.Restart();
-                        }
+							// reset timer
+							timeoutTimer.Restart();
+						}
 						// If Parameter Value has reached its end
 						else if (MaxParameterValue == ParameterValue && IsParameter)
 						{
@@ -786,9 +814,9 @@ foreach (string bankFilePath in bankFiles)
 								ParameterIndex++;
 								// redo the cycle
 								InitParameter = false;
-                                // reset timer
+								// reset timer
 								timeoutTimer.Restart();
-                            }
+							}
 						}
 					}
 				}
@@ -860,10 +888,10 @@ foreach (string bankFilePath in bankFiles)
 				int counterValue = counter % 4;
 
 				// make full spinner message
-				string fullMessage = displayMsg + "	" + sequence[sequenceCode, counterValue];
+				string fullMessage = displayMsg + "\t" + sequence[sequenceCode, counterValue];
 
 				// ensure last line is clear
-				Console.Write("\r													");
+				Console.Write("\r" + new string(' ', 60));
 
 				// Write the new spinner message while clearing last line
 				Console.Write("\r" + fullMessage);
